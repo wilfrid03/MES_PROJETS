@@ -1,8 +1,9 @@
 #Ne pas conserver les images :
 *.png
 *.jpeg
-#ne pas conserver les données d'origine :
+#ne pas conserver les données d'origine et les résultats:
 */DONNEES
+*/RESULTATS
 #Ne pas conserver les historiques:
 *.Rhistory
 *.ipynb_checkpoints
