@@ -6,3 +6,4 @@
 #Ne pas conserver les historiques:
 *.Rhistory
 *.ipynb_checkpoints
+*.RProj
