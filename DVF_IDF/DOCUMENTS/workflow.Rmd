@@ -1,0 +1,18 @@
+# *Workflow : Evolution des prix immobiliers DVF échelle Île-de-France*
+
+## Objectifs :
+
+- Savoir préparer des données sous R,
+- Limiter les valeurs foncières à l'île-de-France,
+- Proposer une étude (de la préparation des données à la la cartographie) sur les valeurs foncières, sans pour autant utiliser des techniques d'analyse complexes.
+- Produire un document final, markdown, qui permet de voir les résultats.
+
+
+## 1/ Préparer les données
+
+Nous allons réaliser une analyse chronologique. Il faut donc préparer les données pour toutes les années entre 2018 et 2022.
+
+
+## Quelques sources :
+<a href="https://hackmd.io/@hOaFaD2DS4WcOzNXU6j7vg/S1zaIGSQP">L'étude originelle par Boris Mericskay</a>
+
