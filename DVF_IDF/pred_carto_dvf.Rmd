@@ -1,0 +1,636 @@
+---
+title: "Prédiction et cartographie des valeurs foncières en Île-de-France"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+## Pré-requis
+
+- Maîtriser les structures de contrôles et les structures de données R,
+- Avoir des notions de base en statistique (moyenne, écart-type, médiane),
+- Avoir des notions d'analyse spatiale/géographie (système de projection, géométrie, distance euclidienne)
+
+
+## Introduction aux notebooks
+
+*Qu'est-ce qu'un notebook ?* C'est une application qui permet de coder et de commenter ce code. Il permet d'afficher les résultats d'une instruction directement. C'est pratique quand on a besoin de contrôler des résultats ou bien quand on veut rédiger un rapport. Un notebook peut contenir du code, du texte et des fichiers médias. Le texte peut être : du texte classique, du html ou du markdown. Il est donc possible d'y ajouter du style (CSS) pour améliorer le rendu. Le notebook est un outil qui permet également de partager les résultats au format .html ou .pdf, en fonction des besoins. Enfin, cette application est écrite en JavaScript, ce qui permet d'utiliser sans problème des librairies R interactives. 
+
+Ce notebook présente une étude sur les DVF, inspirée de l'[étude réalisée à l'échelle de la Bretagne](https://journals.openedition.org/cybergeo/39583#tocto2n3)
+
+
+## Sommaire
+
+## Utilitaires
+```{r eval=TRUE}
+library(dplyr) ## préparer les données
+library(sf) ## analyse spatiale
+library(mapsf) ## carto
+library(maptiles)
+library(ggplot2) ## représentations graphiques
+library(reshape) ## fonction melt, manipulation de df
+
+```
+
+
+## Charger et vérifier les données :
+```{r eval=TRUE}
+dvf22 <- read.csv(file=".\\DONNEES\\full_2022.csv",
+                  stringsAsFactors = FALSE,
+                  encoding="utf-8")
+dvf22 ## Afficher le tableau :
+
+```
+
+Quelles sont les colonnes disponibles ?
+```{r}
+colnames(dvf22)
+```
+Conserver que les champs qui nous intéressent :
+```{r}
+dvf_idf <- dplyr::select(dvf22, 
+                         id_mutation, date_mutation,
+                         nature_mutation, valeur_fonciere,
+                         code_postal, code_commune,
+                         code_departement, code_type_local,
+                         type_local, surface_terrain,
+                         surface_reelle_bati)
+
+dvf_idf
+
+```
+[Une excellente introduction à dplyr](https://larmarange.github.io/analyse-R/manipuler-les-donnees-avec-dplyr.html)
+
+Conserver uniquement les communes d'Île-de-France :
+```{r}
+dvf_idf <- dvf_idf[ dvf_idf$code_departement == c("75", "77", "78",
+                                                    "91", "92", "93",
+                                                    "94", "95"), ] ## ne pas oublier la virgule !
+
+```
+On rappelle que la fonction c() permet de créer un vecteur.
+Lorsqu'on teste si une valeur est égale à un vecteur, on cherche en fait à tester si la valeur testée correspond à au moins une valeur du vecteur. Cette opération est utilisée, ici, pour vérifier l'appartenance au département.
+
+
+
+```{r}
+unique(dvf_idf$code_departement) ## vérifier
+## la fonction unique() permet d'afficher les valeurs uniques dans un vecteur
+
+```
+```{r}
+
+## Filtrer :
+dvf_idf <- dvf_idf[ dvf_idf$type_local %in% c("Appartement", "Maison") & 
+                      dvf_idf$nature_mutation == "Vente",]
+
+## Résumé statistiques
+dvf_idf$code_postal <- as.character(dvf_idf$code_postal) ## conversion
+dvf_idf$code_type_local <- as.character(dvf_idf$code_type_local)
+
+
+summary(dvf_idf) ## des valeurs manquantes ?
+
+
+```
+On peut voir qu'on a l'opérateur && qui est en fait le AND logique. Cela permet d'avoir plusieurs conditions à remplir.
+Visiblement, quelques valeurs foncières sont NA, de même pour les surface de terrain. On va donc estimer les valeurs manquantes en fonction du prix moyen de la commune :
+```{r}
+
+for (i in 1:nrow(dvf_idf)){
+  ## tester si la valeur est NA :
+  if ( is.na(dvf_idf[i, "valeur_fonciere"]) == TRUE ){
+    ## calculer la moyenne de la valeur foncière pour la commune
+    codecom <- dvf_idf[i, "code_commune"]
+    typelog <- dvf_idf[i, "type_local"]
+    
+    m <- mean( dvf_idf$valeur_fonciere[ dvf_idf$code_commune == codecom 
+                                        & dvf_idf$type_local == typelog ], 
+               na.rm=TRUE)
+    
+    ## Remplacer la valeur manquante par la valeur moyenne
+    dvf_idf[i, "valeur_fonciere"] <- m
+    
+  }
+  
+}
+
+
+summary(dvf_idf)
+
+
+```
+Le parcours de data.frame R est une opération complexe, mais très importante. Un data.frame est une structure de données indexée en lignes et avec des colonnes nommées. On peut facilement accéder à un item d'un dataframe appelée df, avec : df[ i, col] où i est le numéro de ligne et col le nom de la colonne. Sachant ça, on va utiliser une boucle qui va aller de 1 (valeur minimum en ligne) à la longueur du df, pour parcourir le df.
+
+Cette opération complexe permet de traiter un dataframe avec beaucoup de précision.
+
+
+```{r}
+
+for (i in 1:nrow(dvf_idf)){
+  ## tester si la valeur est NA :
+  if ( is.na(dvf_idf[i, "surface_terrain"]) == TRUE ){
+    
+    ## calculer la moyenne de la valeur foncière pour la commune
+    codecom <- dvf_idf[i, "code_commune"]
+    typelog <- dvf_idf[i, "type_local"]
+    
+    m <- mean( dvf_idf$surface_terrain[ dvf_idf$code_commune == codecom &
+                                          dvf_idf$type_local == typelog ],
+               na.rm=TRUE)
+    
+    ## Remplacer la valeur manquante par la valeur moyenne
+    dvf_idf[i, "surface_terrain"] <- m
+    
+  }
+  
+}
+
+
+summary(dvf_idf)
+
+
+```
+
+*remarque* : nous aurions pu très bien faire une fonction au lieu de copier-coller le code !
+
+*remarque* : les boucles sont très peu utilisées dans R, car peu performantes. R utilise, à la place des boucles, la vectorisation, qui est un processus plus rapide.
+
+*remarque* : les boucles sont des structures de contrôles très importante. Même si on doit privilégier la vectorisation, la boucle est une structure de contrôle qui permet de résoudre des problèmes complexes.
+
+On ne peut pas corriger certains individus. On va donc les supprimer :
+```{r eval=TRUE}
+
+dvf_idf <- na.omit(dvf_idf)
+dvf_idf
+
+```
+
+
+### Quelques questions pour comprendre le jeu de données :
+
+- Quel est le département avec la valeur foncière moyenne la plus élevée ?
+```{r}
+## On commence par grouper nos données :
+grouped_data <- group_by(dvf_idf[ , c("code_departement", "valeur_fonciere", "surface_reelle_bati") ],
+                         code_departement) ## valeur de regroupement
+
+
+# Puis, on calcule de la moyenne pour chaque groupe
+dvf_idf_grp <- summarise(grouped_data, 
+                     valeur_moyenne = mean(valeur_fonciere, na.rm=TRUE),
+                     surface_moyenne = mean(surface_reelle_bati, na.rm=TRUE))
+
+
+dvf_idf_grp
+
+```
+
+[Faire un groupby avec dplyr](https://juba.github.io/tidyverse/10-dplyr.html)
+
+On pourrait très bien utiliser le pipe de dplyr. Les instructions ici permettent de détailler l'opération.
+Bien que le tableau soit lisible, on peut utiliser un graphique pour comparer plus facilement les départements entre eux :
+
+```{r eval=TRUE}
+
+ggplot2::ggplot(dvf_idf_grp, aes(x=surface_moyenne, y=valeur_moyenne)) + 
+  ggplot2::ggtitle("Surface et valeur moyenne des valeurs foncières \n 
+                   dans les départements d'île-de-France") +
+  geom_text(label=dvf_idf_grp$code_departement)
+
+
+```
+
+[Faire un scatter plot avec ggplot2](http://www.sthda.com/english/wiki/ggplot2-scatter-plots-quick-start-guide-r-software-and-data-visualization)
+
+*remarque* : STHDA est un site de référence pour les statistiques. Il existe une version française aussi. Il permet de retrouver quelques astuces et est plus lisible que certaines documentations. En revanche, pour certaines manipulations il est vivement recommandé d'aller voir la documentation.
+
+```{r eval=TRUE}
+## On pourrait également ploter toutes les communes, et voir si certaines "sortent" du lot par rapport au département :
+
+grp <- group_by(dvf_idf[ , c("code_commune", "code_departement", 
+                             "valeur_fonciere", "surface_reelle_bati") ],
+                         code_commune) ## valeur de regroupement
+
+
+# Puis, on calcule de la moyenne pour chaque groupe
+grpcom <- summarise(grp, 
+                    code_commune= code_commune,
+                    code_departement = code_departement,
+                    valeur_moyenne = mean(valeur_fonciere, na.rm=TRUE),
+                    surface_moyenne = mean(surface_reelle_bati, na.rm=TRUE))
+
+
+grpcom
+
+gcom <- ggplot(grpcom, aes(x = surface_moyenne, y = valeur_moyenne, color = code_departement)) +
+  geom_point() +
+  labs(title = "Surface et valeur moyenne dans les communes",
+       x = "Surface bâtie moyenne",
+       y = "Valeur foncière moyenne",
+       color = "Département") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Affichage du graphique
+print(gcom)
+
+
+```
+
+<div style="border:2px solid red;"><span style="font-size:bolder;">Interprétation</span>En Île-de-France, on peut voir que gloablement, les prix sont bas. Les points sont plutôt ramassés. Quelques communes seulement se distinguent des autres, surtout par leur valeur foncières moyenne !</div>
+
+### Nombre de vente par date :
+```{r eval=TRUE}
+head(dvf_idf)
+
+## Commencer par transformer le champ date en date :
+
+dvf_idf$date <- as.Date(dvf_idf$date_mutation, format="%Y-%m-%d")
+
+dvf_idf$nb_vente <- 1 
+
+## grouper les valeurs :
+
+grp <- group_by(dvf_idf[ , c("date", "date_mutation", "nb_vente") ],
+                         date) ## valeur de regroupement
+
+
+# Puis, on calcule de la somme des ventes pour chaque groupe
+date_grp <- dplyr::summarise(grp, 
+                         nb_vente = sum(nb_vente, na.rm=TRUE))
+
+
+date_grp
+
+## représentation graphique :
+
+ggplot2::ggplot(data=date_grp, aes(x = date, y = nb_vente)) +
+  geom_line() +
+  labs(title = "Nombre de ventes au cours de 2022",
+       x = "Date",
+       y = "Nombre de ventes") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+[Convertir une str en date avec r](https://www.statology.org/convert-strings-to-dates-in-r/)
+
+
+
+## Cartographier la valeur foncières en 2022
+
+La cartographie est possible avec R. Les fichiers géographiques sont lus grâce à sp et/ou sf, qui sont des librairies dédiés à l'analyse spatiale. Afin d'introduire l'usage de ces packages, vous pouvez vous rendre sur [Géomatique avec R](https://rcarto.github.io/geomatique_avec_r/), un site construit par des géomaticiens et statisticiens, spécialistes du langage R. Vous retrouverez, à travers ces packages, toutes les *fonctions* (opérations spatiales par exemple) ET les *contraintes* (projection, topologie etc) liées au fichiers géographiques !
+
+```{r eval=TRUE}
+
+com <- sf::st_read("DONNEES\\communes_idf_2022.shp")
+## com ## décommenter pour voir ses caractéristiques !
+## on peut voir que la projection est en 4326, nous on veut du lambert-93 :
+com_reproj <- sf::st_transform(com, "epsg:2154")
+
+head(com_reproj)
+
+```
+Un objet sf n'est autre qu'un data.frame R, avec une colonne géométrique (geometry). Vous retrouverez donc le même comportement dans un tel objet que dans un data.frame R. La colonne geometry va contenir la géométrie d'un individu. Ce n'est donc pas un tout nouvel objet R, ce qui le rend plus facile à manipuler.
+```{r eval=TRUE}
+
+## Afficher la géométrie :
+
+## charger un fond de carte OSM selon l'emprise de x : 
+osm_tiles <- get_tiles(x = com_reproj, zoom = 10, crop = TRUE) 
+## Afficher le fond de carte : 
+plot_tiles(osm_tiles)
+
+## Afficher la carte
+plot(st_geometry(com_reproj), add=TRUE, border = "grey20", lwd = .7)
+
+## Sources/contributions :
+mtext(side = 1, line = -1, text = get_credit("OpenStreetMap"), col="tomato")
+
+
+```
+
+En complément de la Géomatique avec R cité précédemment, on peut utiliser [Cartographie avec R](https://rcarto.github.io/cartographie_avec_r/) qui est la suite et permet d'apprendre la cartographie avec mapsf.
+
+*remarque* : Utilisez les sites indiqués comme des mémos. Inutile de tout retenir. Déjà parce que c'est impossible, ensuite parce que c'est inutile ! L'important est de comprendre ce qui est possible de faire avec le langage.
+
+
+### Quelques pré-requis ...
+
+Vous êtes arrivés jusque-là et c'est déjà beaucoup ! Les pré-requis concernent la cartographie. R vous permet d'utiliser plusieurs fonctionnalités d'analyse spatiale ou de cartographie, et d'aller automatiser certaines tâches. En revanche, il est quand-même nécessaire de :
+
+- connaître l'importance des systèmes de projection. R ne va pas reprojeter automatiquement comme QGIS. Lorsque vous importez un fichier, vérifier que sa projection est conforme à vos attentes et sinon, reprojetez.
+- Connaître le principe de la cartographie sous SIG, tel que QGIS. La cartographie sous SIG utilise le principe des "couches". Les couches sont des données qui vont se superposer, se croiser etc. Il est donc important d'avoir en tête la hiérarchie de représentation : points, lignes puis polygones.
+- Savoir que les couches peuvent interagir entre elles par leur attributs et par leur géométrie.
+
+Le principe des couches est repris dans le package mapsf.
+
+### Cartographier les valeurs foncières (cercles proportionnels)
+
+- Faire une carte de la valeur foncière sur toutes les communes.
+```{r eval=TRUE}
+## on dispose des polygones des communes
+## le champ commun des polygone et des valeurs foncières est le code INSEE
+
+## Les valeurs foncières sont des points à l'origine.
+
+## Calculer, pour chaque commune, la valeur foncière moyenne
+grp <- group_by(dvf_idf, 
+                code_commune) ## valeur de regroupement
+
+
+# Puis, on calcule de la somme des ventes pour chaque groupe
+dvf_grp <- dplyr::summarise(grp, 
+                            code_departement = unique(code_departement),
+                            type_local = unique(type_local),
+                            surface_terrain = mean(surface_terrain, na.rm=TRUE),
+                            valeur_fonciere = mean(valeur_fonciere, na.rm=TRUE),
+                            surface_reelle_bati = mean(surface_reelle_bati, na.rm=TRUE),
+                            nb_vente = sum(nb_vente, na.rm=TRUE))
+
+
+dvf_grp ## Contrôler les résultats
+
+
+## Associer à la dvf la commune via le code INSEE
+f <- base::merge(x=com_reproj, y=dvf_grp,
+                 by.x="insee", by.y="code_commune", all.x=TRUE)
+
+
+## Calculer le centroïde des géométries
+sf::st_centroid(f)
+## View(f) ## OK
+
+# Communes
+mf_map(x = com_reproj)
+# Symboles proportionnels
+mf_map(
+  x = f, 
+  var = "valeur_fonciere",
+  type = "prop",
+  leg_title = ""
+)
+# Titre
+mf_title("Valeur foncière moyenne dans les communes d'Île-de-France")
+
+
+
+```
+
+
+- Faire une planche avec une carte de la valeur foncière moyenne par commune, pour chaque département
+
+```{r eval=TRUE}
+
+## Globalement, les cercles sont plus gros que les communes
+## On va donc réduire la taille des cercles en calculant la racine carré
+##+ de la valeur foncière :
+
+f$sqrt_val_fonciere <- sqrt(f$valeur_fonciere) 
+
+## Gestion de la planche de résultats :
+graphics::par(mfrow=c(2, 4), ## découpage de la planche de 2 lignes, 4 col 
+              mar=c(2, 2, 2, 2)) ## marge de 2
+
+## Réaliser une boucle pour faire les cartes :
+
+## On veut une carte par département. Chaque individu possède un département. On va donc prendre les valeurs uniques de la colonne des départements numdep. Si on bouclait seulement sur numdep, alors on aurait une carte par individu !
+
+for(i in unique(x=f$numdep)){ ## la fonction unique retourne un vecteur de valeurs uniques
+  # Communes -> le fond de carte
+  mf_map(x = com_reproj[ com_reproj$numdep == i, ])
+  
+  # Symboles proportionnels : création de la carte
+  mf_map(
+    x = f[ f$numdep == i, ],## le jeu de donnée filtré
+    var = "sqrt_val_fonciere", ## la variable à représenter
+    type = "prop", ## le type de représentation. Ici "proportionnel"
+    leg_title = "", ## le titre de la légende, non obligatoire
+    leg_frame=TRUE ## un fond pour la légende
+  )
+  
+  ## Titre de la carte
+  mf_title( paste("Valeurs foncières moyenne dans les communes du département ", i)) ## utilisation de paste pour inclure le numéro du département
+}
+
+
+
+```
+
+Nous touchons là une limite de la cartographie avec R. Il est possible de faire un tas de type de carte. En revanche, certaines ne sont pas totalement paramétrables. Il n'est pas possible d'avoir une taille maximum des cercles proportionnels. En revanche, on peut exporter ces résultats sous forme de table ou de géoémtrie vers QGIS et obtenir des cartes plus lisibles.
+Il est également possible de "contourner" le problème, voici quelques solutions lorsque vos valeurs d'origine sont trop grandes :
+
+- calculer la racine carrée. La racine carrée est normalement plus petite que la valeur sur laquelle elle est calculée.
+- Centrer-réduire votre variable d'origine. Cette opération consiste à calculer la distance de chaque valeur par rapport à la moyenne. Il faut donc être vigilant : *quelle est la moyenne de référence que vous souhaitez utiliser ?*
+- Dans le respect de la sémiologie graphique, vous ne pourriez utiliser un autre figuré pour une donnée quantitative type effectif. Dans ce cas, vous pourriez calculer : la valeur foncière/habitants, valeur foncière/nombre de vente etc. Vous auriez alors une carte choroplèthe.
+
+### Résumé
+
+Au cours de cette partie, nous nous sommes intéressés à la représentation des données avec des packages "basiques" de R : *ggplot2* et *mapsf.* Le premier vous sert à représenter des données sans géométrie tandis que l'autre sera spécialisé dans les données avec géométries. Nous avons également eu recours à des opérations de regroupement (groupby) réalisées avec le package *dplyr*, spécialisé dans la préparation des données.
+Vous avez également vu une opération spatiale : le calcul du centroïde, qui est facilité avec sf::st_centroid, *sf* étant un package spécialisé dans l'analyse spatiale. Au niveau des représentations, vous avez pu voir différentes possibilités :
+- le scatterplot qui permet de représenter des données en 2D,
+- la carte,
+- la planche de cartes, réalisés facilement avec une boucle.
+
+Ce dernier cas vous illustre comment utiliser une structure de contrôle, afin de "gagner" du temps en évitant la répétition à la main. 
+
+
+
+## Analyse spatiale
+
+Les techniques d'analyse spatiales vont tenir compte à la fois de l'information statistique et de l'information géométrique/géographique (la distance le plus souvent). En géographie, on se retrouve très souvent avec une grosse quantité de données (communes, points etc). Et il peut être nécessaire ou intéressant, à des fins exploratoires, de "regrouper" les données. Pour cela, on utilise des techniques de classifications. Les classifications consistent à regrouper des individus en fonction de leur ressemblance par rapport à plusieurs variables. La ressemblance est évalué par la distance. Plus une distance est faible par rapport à une autre et plus il y aura ressemblance.
+Il existe de nombreuses techniques de classifications, mais en géographie on préfère souvent la "CAH" ou classification ascendante hiérarchique. En fonction de la ressemblance des individus par rapport à plusieurs variables, nous allons créer des "groupes" qu'on appellera "cluster". Ces clusters seront décris par les valeurs moyennes. Etant donné que la ressemblance est basée sur la distance et que chaque grope à une distance interne la plus petit possible, on peut dire que chaque groupe est homogène mais les groupes sont hétérogènes entre eux. Ainsi, la moyenne est bien représentative de chaque groupe.
+
+Généralement, les phase de classification, en géo, finissent par une cartographie des clusters.
+
+Nous allons réaliser une "classification ascendante hiérarchique" (ou CAH).
+
+```{r eval+TRUE}
+## calculer le prix au m² :
+dvf_grp$prixm2 <- round( dvf_grp$valeur_fonciere / dvf_grp$surface_terrain ,2)
+
+head(dvf_grp)
+
+
+```
+
+```{r eval=TRUE}
+
+# Communes -> le fond de carte
+mf_map(x = com_reproj)
+
+## merge() permet de joindre deux tables en fonction d'un champ dont les valeurs sont communes aux deux tables
+dvf_geom <- merge(x=com_reproj, y=dvf_grp,
+                  by.x="insee", by.y="code_commune",
+                  all.x=TRUE)  ## jointure vers la gauche (x) pour garder la géométrie
+
+# Carte choroplèthe : création de la carte
+mf_map(
+  x = dvf_geom, ## le jeu de donnée
+  var = "prixm2", ## la variable à représenter
+  type = "choro", ## le type de représentation. 
+  leg_title = "", ## le titre de la légende, non obligatoire
+  pal= mapsf::mf_get_pal(n = c(6, 5), palette = c("Teal", "Burg")),
+  col_na="grey",
+  leg_frame=TRUE ## un fond pour la légende
+)
+
+## Titre de la carte
+mf_title( paste("") ) ## utilisation de paste pour inclure le numéro du département
+
+
+
+```
+
+### Classification ascendante hiérarchique
+
+Nous allons réaliser une CAH tenant compte des variables :
+- valeur foncière,
+- prixm2,
+- surface réelle bâtie,
+- nombre de vente,
+- surface terrain
+
+[L'excellent R est espace](https://archives.framabook.org/docs/Respace/RetEspace_final_20140901.pdf) pour faire de l'analyse spatiale et la CAH
+
+```{r eval=TRUE}
+
+library(cluster)
+
+## commencer par standardiser la variable :
+s <- c("code_commune", "surface_terrain", "valeur_fonciere", "surface_reelle_bati", "nb_vente", "prixm2")
+
+temp_df <- dvf_grp[,s]
+temp_df
+
+scaled_df <- scale(temp_df[2:6])
+scaled_df
+
+cahDVF <- cluster::agnes(scaled_df,
+                         metric="euclidian",
+                         method="ward")
+
+## Afficher l'inertie :
+heightdvf <- base::sort(cahDVF$height, 
+                        decreasing=TRUE)
+
+
+graphics::plot(heightdvf, type="h")
+
+## histo ggplot2 : http://www.sthda.com/english/wiki/ggplot2-histogram-plot-quick-start-guide-r-software-and-data-visualization
+
+```
+
+Avant toute décision, on va regarder l'inertie. Cela permettra de guider la décision dans le découpage en classes :
+
+
+```{r eval=TRUE}
+relPoids <- heightdvf / sum(heightdvf) * 100
+cumPoids <- cumsum(relPoids)
+
+graphics::barplot(relPoids[1:30], names.arg=seq(1, 30, 1),
+                  col="black", border="white",
+                  xlab="Noeuds", ylab="Part de l'inertie totale en %")
+
+
+
+
+```
+
+On peut voir que c'est à partir de la 6e classe qu'on a le moins de changement. On peut donc découper en 2 à 6 classes.
+
+```{r eval=TRUE}
+dendroDVF <- stats::as.dendrogram(cahDVF)
+graphics::plot(dendroDVF, leaflab="none")
+
+
+
+
+```
+
+```{r eval=TRUE}
+clusDVF <- cutree(cahDVF, k=5) ## découper l'arbre en 5 classes
+dd <- as.data.frame(scaled_df)
+dd$code_com <- dvf_grp$code_commune
+dd$clust <- factor(clusDVF,
+                   levels=1:5,
+                   labels=paste("CLUS", 1:5))
+
+
+```
+
+Ensuite, il faut être en mesure de décrire les classes. Les classes peuvent être décrites par :
+- les moyennes des variables d'origine,
+- les moyennes des variables centrées-réduites.
+
+Etant donné que les variables sont à la base hétérogènes et qu'il s'agit de les comparer entre elles, on va opter pour la 2e option.
+
+
+```{r eval=TRUE}
+## d'abord, calculer la moyenne des groupes avec aggregate()
+clsProfile <- aggregate(dd[, 2:6],
+                        by=list(dd$clust),
+                        mean)
+
+colnames(clsProfile)[1] <- "CLUSTER"
+clusLong <- melt(clsProfile, id.vars="CLUSTER")
+
+## https://www.digitalocean.com/community/tutorials/r-melt-and-cast-function
+
+
+
+## représenter graphiquement chacun des groupes :
+ggplot2::ggplot(clusLong) +
+  geom_bar(aes(x=variable, y=value, fill=CLUSTER),
+           stat="identity") +
+  scale_fill_grey() +
+  facet_wrap(~ CLUSTER) + ## https://stackoverflow.com/questions/45925496/ggplot2-facet-wrap-doesnt-find-a-variable-but-shape-does
+  coord_flip() + theme_bw()
+
+
+
+```
+
+
+```{r eval=TRUE}
+## cartographie des résultats :
+
+cah_geom <- merge(x=com_reproj, y=dd,
+                  by.x="insee", by.y="code_com",
+                  all.x=TRUE)
+
+unique(cah_geom$clust) ## afficher le nombre de valeur unique pour définir les couleurs
+
+# Carte de typo :
+mf_map(
+  x = cah_geom, ## le jeu de donnée
+  var = "clust", ## la variable à représenter
+  type = "typo", ## le type de représentation. Ici "proportionnel"
+  leg_title = "", ## le titre de la légende, non obligatoire
+  pal= c("#ef476f", "#ffd166", "#06d6a0", "#118ab2", "#073b4c"), ## palette de couleur : https://coolors.co/palettes/trending
+  col_na="grey",
+  leg_frame=TRUE ## un fond pour la légende
+)
+
+## Titre de la carte
+mf_title( paste("") ) ## utilisation de paste pour inclure le numéro du département
+
+
+```
+
+
+
+
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

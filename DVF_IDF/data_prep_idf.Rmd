@@ -1,0 +1,406 @@
+---
+title: "Préparation des données DVF (données valeurs foncières) pour du traitement R sur la zone IDF"
+output: html_notebook
+---
+
+Ce document est un format notebook. Les Notebooks sont des fichiers interactifs, qui permettent de combiner différents items : les instructions de code, le html, le texte et les médias. Vous pourriez également ajouter des items d'interaction (cartes, graphiques, tableaux etc). Les notebook bénéficient du langage markdown, qui est un balisage HTML simplifié. Vous retrouverez des éléments de syntaxes au fur et à mesure de votre avancée dans la lecture de ce document. Il n'est pas nécessaire de le maîtriser pour faire du R. Les sorties textes, images etc peuvent être exportées (fonction export de Rstudio, fonction export du package ou capture d'écran). En revanche, il peut faire gagner du temps lors de l'analyse (traitement > représentations > interprétation). Aussi, la légende raconte que vous pouvez également utiliser une feuille de style [CSS](https://developer.mozilla.org/fr/docs/Web/CSS) qui sont des fichiers de style que vous utilisez pour personnaliser (jusqu'à la lettre !) un document.
+
+Ce Notebook montre un cas d'usage de R : le nettoyage de données.
+On commence par activer les packages nécessaires pour les traitements :   
+
+- tidyverse : un package qui regroupe un ensemble d'autres packages R qui permettent de manipuler les données. Il centralise les packages les plus intéressants et les plus populaires pour cette tâche.  
+- ggplot2 : un package pour améliorer les représentations de données avec R.
+
+La fonction install.packages() permet d'installer des packages. Il est utile de commencer par cette instruction et la passer en commentaire pour empêcher son exécuter. Au besoin, elle est décommentée et exécutée par l'utilisateur.
+
+```{r eval=TRUE}
+## install.packages( c("tidyverse", "ggplot2", "dplyr") )
+
+base::library(tidyverse) ## manipuler des données
+base::library(ggplot2) ## représentation graphiques améliorés
+base::library(dplyr) ## manipuler les données
+
+```
+
+## Objectifs :
+
+- préparer des données,
+- décrire les données,
+- conserver uniquement les valeurs pour le Val-d'Oise,
+- cartographier les résultats
+
+## 1/ Charger les données
+
+On a récupéré toutes les dvf de 2022 concernant la France entière. Les données chargées concernent toute la France. Elles sont dans le répertoire DONNEES et sont nommées full_2022.csv. C'est un type CSV, on peut donc utiliser la fonction read.csv() de utils, en fournissant d'abord. Toutes les valeurs foncières se trouvent [ici](https://www.data.gouv.fr/fr/datasets/5cc1b94a634f4165e96436c1/), un lien renvoie vers un répertoire contenant les valeurs foncières pour les 5 dernières années, par rapport à l'année courante.
+
+```{r eval=TRUE}
+dvf <- utils::read.csv(file=".\\DONNEES\\full_2018.csv", ## chemin relatif vers le fichier
+                       encoding="utf-8", ## Encodage du fichier
+                       stringsAsFactor=FALSE) ## les chaînes de caractères ne sont pas considérés comme des facteurs
+
+dvf ## Afficher tout le data.frame dans le notebook.
+```
+
+## 2/ Filtrer et nettoyer les données DVF
+
+On commence par conserver uniquement les ventes de maison et d'appartement. Pour faciliter les traitements et gagner en lisibilité, on va utiliser le ["pipe"](https://stackoverflow.com/questions/24536154/what-does-mean-in-r), qui est un opérateur prenant la forme ```%>%``` dans votre code. Il permet de faire passer le retour d'une instruction à une autre instruction, sans avoir besoin d'appeler la variable concernée ou créer des variables intermédiaires. 
+
+```{r eval=TRUE}
+
+## Prendre dvf et y appliquer la fonction filter() 
+dvf1 <- dvf %>% dplyr::filter(nature_mutation == "Vente")
+dvf1b <- dvf1 %>% dplyr::filter(type_local == "Maison" | type_local == "Appartement")
+
+## On retrouve l'opération d'assignation, qui consiste à créer une variable qui va contenir des données. Nous avons là un filtre "pas à pas". Mais il aurait été possible d'avoir des instructions plus concises.
+
+
+head(dvf1b)
+```
+
+Puis on sélectionne avec ```select()``` les variables qui nous intéressent et on les renomme pour faciliter les traitements.
+
+```{r eval=TRUE}
+dvf2 <- dvf1b %>% select(id=id_mutation, ## id_mutation devient id
+                         disposition=numero_disposition,
+                         parcelle=id_parcelle,
+                         date = date_mutation, 
+                         nature = nature_mutation, 
+                         codecommune = code_commune, 
+                         departement = code_departement, 
+                         type = type_local, 
+                         surface = surface_reelle_bati, 
+                         piece = nombre_pieces_principales, 
+                         prix = valeur_fonciere, 
+                         latitude, longitude)
+
+```
+
+Remplacer les cellues vides par des NA et supprimer les valeurs NA :
+
+```{r eval=TRUE}
+## On commence par assigner à toutes les cellules vides un valeur NA :
+
+dvf2[ dvf2=="" ] <- NA ## NA est une valeur lu et compris par R
+## Afin d'identifier les cellules vides, nous avons effectué un filtre, possible avec []
+
+dvf3 <- dvf2 %>% na.omit() ## supprimer les valeurs manquantes
+
+dvf3
+```
+
+## 3/ Diagnostic des types de mutations
+
+Quel est le nombre de mutation uniques ?
+```{r eval=TRUE}
+
+## Afin de connaître le nombre de valeurs foncières uniques, il faut compter le nombre de valeurs uniques. Il faut donc trouver le champ qui va contenir des valeurs uniques. Généralement c'est l'identifiant. On va donc précéder ainis :
+##+ 1/ identifier toutes les valeurs uniques. On utiliser unique()
+##+ 2/ Compter ces valeurs uniquements. On utilisera length()
+
+nbunique <- length(unique(dvf3$id))
+
+## Contenir le résultat d'une fonction est possible parce que les deux fonctions
+##+ utilisées ici RETOURNE un résultat. Ainsi, le résultat de unique() est 
+##+ retourné à length, qui lui va retourner un résultat à nbunique.
+
+
+```
+
+**Combien de mutations monoventes/monolignes ?**
+L'instruction suivante semble plus complexe, mais elle est en fait très simple à comprendre. Notez que bien que R ne dispose pas toujours de fonctions au nom explicite, l'**aide intégrée** dans le logiciel R permet de saisir rapidement l'utilité d'une fonction avec l'instruction ```?nom.fonction```à exécuter dans la console.  
+
+On retrouve le pipe plusieurs fois. Ce qui permet de ne pas créer de variables intermédiaires et donc de ne pas surcharger le code et la mémoire de la machine pendant que vous travaillez. Ainsi : le contenu de dvf3 passe dans groupy_by(), le contenu de celui-ci va dans summarise() et le résultat est contenu dans uniquesimple().  
+
+- La fonction ```group_by()``` permet de grouper un jeu de données en fonction d'une ou plusieurs variables à comparer. Quand celles-ci matchent, alors on peut les regrouper. Certains jeux de données vont avoir des variables supplémentaires comme des valeurs numériques. Dans ce cas, vous pouvez appliquer une opération (somme, division, moyenne, etc) à ces variables dans ce groupement. Prenons un exemple : vous disposez d'un jeu de données sur le revenu à l'échelle IRIS (ilôt statistique, à l'échelle infracommunale et inclus totalement dans les limites administratives) qui va contenir les champs : code_iris, code_commune et revenus. Vous savez que les IRIS sont contenus dans les communes et que les regrouper vous permettra de savoir comment est distribué le revenu à l'échelle communale. Vous allez donc grouper vos observations par code_commune, et vous allez pouvoir aussi calculer, par exemple, la moyenne, la médiane, le minimum et le maximum du revenu pour chaque commune !  
+- ```summarise()``` : vous permet d'effectuer des calculs, comme ceux indiqués ci-dessus.
+
+```{r eval=TRUE}
+uniquesimple <- dvf3 %>% 
+  group_by(id)%>% 
+  summarise(prix = max(prix), ## prix est une variable de dvf3
+            surface = max(surface), ## surface est une variable de dvf3
+            nb = n()) ## nombre d'individu du groupe.
+
+nbtransactionstimplemonoligne <- uniquesimple %>% filter(nb==1)
+## Permet de récupérer tous les groupes ne contenant qu'un seul individu.
+
+length(unique(nbtransactionstimplemonoligne$id)) ## on accède à la variable id
+
+```
+Depuis le début de ce notebook, les traitements sont réalisés sur l'ensemble du tableau (data.frame) et les variables sont appelées au sein de fonctions, qui savent comment retrouver une variable dans un data.frame. C'est une illustration de la philosophie de R : des instructions simples, faciles à lire mais sous condition de connaître le langage (comme toutes langues !).
+Mais regardez ```length(unique(nbtransactionstimplemonoligne$id)) ## on accède à la variable id``` : cette instruction, bien que difficile à lire, contient le symbole ```$```qui n'a pas encore été utilisé jusque-là. Ce symbole permet d'accéder à une variable de votre data.frame à la fois. C'est un opérateur courant, il faut donc l'avoir en mémoire !  
+Notez que "tout est parfait" dans ce script : toutes les fonctions existantes sont utiles, et aucune fonction n'est écrite pour répondre à un besoin précis. Pour autant, ce n'est pas toujours le cas : pour des usages spécifiques, connaître les packages R c'est bien, mais connaître le R-Base c'est mieux ! Vous pouvez faire du sur-mesure, pour répondre à des problématiques précises.
+
+
+**Combien de mutations monoventes/multilignes ?**
+
+```{r eval=TRUE}
+(length(unique(dvf3$id)))-(length(unique(nbtransactionstimplemonoligne$id)))
+
+```
+
+## 4/ Suppression des doublons et des mutations multiventes
+
+```{r eval=TRUE}
+
+## Regrouper les transactions selon l'id, la surface et la vente :
+unique <- dvf3 %>%
+  distinct(id, prix, surface)
+
+nbunique <- unique %>%
+  group_by(id) %>%
+  summarise(nb=n())
+
+```
+
+
+```{r eval=TRUE}
+
+## Suppression des doublons et des mutations multiventes :
+dvf4 <- nbunique %>%
+  filter(nb==1)
+
+```
+
+```{r eval=TRUE}
+dvf4
+
+```
+
+```{r eval=TRUE}
+## jointure attributaire pour récupérer les informations de la mutation :
+merged <- merge(dvf4, dvf3, by="id") ## fusion de dvf4 et dvf3 selon le champ commun id
+
+dvf5 <- merged %>% 
+  distinct(id, .keep_all=TRUE) %>%
+  select(id, date, type, nature, codecommune, 
+         prix, surface, piece, latitude,
+         longitude)
+
+dvf5
+
+```
+
+Modification des formats des colonnes :
+```{r eval=TRUE}
+dvf5$prix <- as.integer(dvf5$prix) ## conversion en entier
+dvf5$surface <- as.numeric(dvf5$surface) ## conversion en décimale
+dvf5$piece <- as.numeric(dvf5$piece) ## conversion en décimale
+
+dvf5
+
+
+```
+## 5/ Suppression des valeurs aberrantes 
+
+```{r eval=TRUE}
+## On commence par définir un seuil minimal des prix :
+quantile(dvf5$prix, 0.01) ## afficher la valeur du quantile 1% (1er centile)
+
+
+```
+Ici, vous pouvez voir qu'il n'est pas nécessaire d'indiquer les noms de paramètres dans la fonction quantile. Beaucoup de fonctions, voire toutes, fonctionnent de la sorte. En fait, quand une fonction est crée, l'ordre dans lequel ses paramètres sont passés a de l'importance. Pour des raisons de lisibilité (et surtout au début) il est important de les mentionner au moment de l'appel de la fonction. **Quand vous ne mentionnez pas les noms des paramètres à l'appel de la fonction, il faut absolument respecter l'ordre dans lequel ils ont été passés lors de la création de la fonction**. Si vous les mentionnez à l'appel de la fonction, alors l'ordre n'a pas d'importance (parce que vous indiquez à R quoi faire exactement). Pour connaître l'ordre ou l'ensemble des paramètres possibles pour une fonction, reportez-vous à sa documentation (soit dans RStudio, soit en ligne).
+
+Représentation graphique avec [ggplot2](https://ggplot2.tidyverse.org/). ggplot2 est un package de visualisation graphique, qui permet d'une part de mieux saisir la donnée représentée à l'aide de fonctions puissantes de représentation. Mais aussi, d'avoir plus de "choix" et d'obtenir votre graphique plus rapidement et avec plus l'élégance qu'avec le R-base. C'est un package populaire, qui est ré-utilisé dans plusieurs autres packages (tidyverse, ggplotly par exemple). ggplot2 **n'est pas natif**, il faut donc l'installer avant l'utilisation (sinon installer uniquement tidyverse et le tour est joué !).
+
+Afin d'apprendre comment utiliser ce package, vous pouvez suivre [ce tutoriel rapide en français sur la production de graphiques linéaires](http://www.sthda.com/french/wiki/ggplot2-graphique-lineaire-guide-de-demarrage-rapide-logiciel-r-et-visualisation-de-donnees) qui va vous permettre de saisir la philosophie du package via des représentations variées.
+
+**Notez qu'un package, comme le langage, va avoir une philosophie**. Lorsque vous avez saisie cette philosophie pour un package, vous êtes en mesure de produire des graphiques avec plus d'aisance. Le tutoriel ci-dessus est un bon point de départ. En complément, n'hésitez pas à "jouer" avec ggplot2, à tester ses capacités, ses fonctionnalités existantes, à lire/suivre d'autres tutoriels pour apprendre.
+
+**La pluralité des graphiques est simplement un réponse à des besoins**. L'histogramme que vous allez voir vous permet de voir la distribution d'une variable (symétrique, asymétrique, valeurs extrêmes, est-ce qu'il y a plus de valeurs petites que de valeurs grandes, entre autres), et ainsi savoir quelles transformations vous auriez besoin de faire. En revanche, un barplot (diagramme en barre) est un diagramme qui va venir compter les occurences pour chaque modalité d'une variable. Exemple : combien d'IRIS ont un salaire au-dessus de la moyenne régionale ?  
+Il ne s'agit pas uniquement de représenter vos données pour des besoins/envies de représentation, d'où la présence de ce package. ggplot2, à la différence de graphics, peut aider à **valoriser vos traitements** et aller plus loin que la simple exploration. Ses graphiques peuvent être (et le sont très souvent !) intégrés à des rapports de sorte à mieux rendre compte des résultats ou d'un état tout simplement.
+
+**Pour s'informer sur les possibilités offertes de ggplot2**, vous pouvez visiter la galerie de sa documentation. Il y a des représentations pour des tutoriels mais également des contributions.
+
+```{r eval=TRUE}
+## puis on va fixer un seuil maximal des prix 
+ggplot2::ggplot(dvf5, aes(x=prix)) + ## dans dvf5, sélectionner la variable prix
+  ggplot2::geom_histogram(bins=100) + ## faire un histogram avec 100 limites
+  xlim(10000, 5000000) ## où les limites sont au moins de 10000 et au plus de 5000000
+
+```
+Ensuite on va créer deux jeux de données (maisons/appartements)
+
+```{r eval=TRUE}
+maisons <- dvf5 %>%
+  filter(type == "Maison")
+
+appart <- dvf5 %>%
+  filter(type == "Appartement")
+
+```
+
+Par la suite, nous allons également utiliser les fonctions de **graphics**. Les fonctions de graphics semblent plus légères à la syntaxe (donc c'est bien pour de l'exploration rapide et efficace !) mais moins élégantes au résultat. Vous n'êtes pas obligés de vous "cantonner" à un seul package. Si plusieurs vous plaisent, utilisez-en plusieurs. En revanche, sur le long terme, il faudra veiller, si besoin, à la compatibilité de vos résultats de fonctions de représentation (est-ce que le résultat d'une fonction peut être contenu dans une autre pour optimiser le traitement par exemple).
+
+
+```{r eval=TRUE}
+## puis on va ficher un seuil max des surfaces pour chaque jeu précédemment crée :
+graphics::hist(maisons$surface,
+               main="Distribution des surfaces des maisons",
+               nclass=500, xlim=c(0,600))
+
+```
+
+
+```{r eval=TRUE}
+graphics::hist(appart$surface, nclass=500, xlim=c(0,300))
+
+```
+
+
+Ensuite, on va séelctionner les bornes des prix et de surface :
+```{r eval=TRUE}
+dvf6 <- dvf5 %>% filter(between(prix, 15000, 5000000)) %>%
+  filter(case_when(type=="Appartement" ~ between(surface, 10, 250)) | 
+           case_when(type=="Maison" ~ between(surface, 10, 500)))
+
+```
+
+Ensuite, on va calculer le prix au m² et filtrer des valeurs extrêmes et aberrantes :
+```{r eval=TRUE}
+
+dvf7 <- dvf6 %>% 
+  mutate(prixm2 = prix/surface)
+
+dvf7$prixm2 <- round(dvf7$prixm2)
+```
+
+```{r eval=TRUE}
+## fixer un seuil minimal des prix au m² (percentile) :
+quantile(dvf7$prixm2, 0.01)
+
+## puis fixer un seuil maximal des prix au m²
+hist(dvf7$prixm2, breaks = 1000, xlim = c(0,20000))
+
+## puis on filtre les valeurs :
+dvf8 <- dvf7 %>% filter(between(prixm2,330,15000))
+
+
+
+```
+
+
+```{r eval=TRUE}
+## transformation de la date en année :
+
+dvf8$date <- as.character(dvf8$date)
+dvf8 <- dvf8 %>% mutate(ANNEE = substr(dvf8$date, 1, 4))
+
+head(dvf8)
+```
+
+## 6/ Enrichissement des mutations avec de nouvelles variables :
+
+
+```{r eval=TRUE}
+
+## Ajout de variables relatives à la commune et à l'EPCI :
+url_cog <- "https://www.insee.fr/fr/statistiques/fichier/6051727/commune_2022.csv" ## URL pour récupérer le cog des communes 
+
+## puis ouvrir
+cog <- utils::read.csv(url_cog)
+head(cog)
+
+
+```
+
+```{r eval=TRUE}
+cog <- cog %>% mutate(codecommune=COM)
+dvf9 <- merge(dvf8, cog, "codecommune")
+
+## A partir de là,le jeu de données est trop grand pour être traité rapidement.
+## Etant donné que nous allons uniquement traiter les ventes en île-de-France, nous allons filtrer sur les ##+ départements de l'IDF :
+
+dvf9$codedep <- substr(x=dvf9$codecommune,
+                      start=1, stop=2)
+
+## Filtrer les colonnes :
+
+dvf9 <- dvf9[ , c("codecommune", "id", "date", "type", "nature", 
+                  "prix", "surface", "piece",
+                  "latitude", "longitude", "prixm2", "ANNEE", "COM",
+                  "REG", "DEP", "ARR", "LIBELLE")]
+
+head(dvf9)
+
+```
+
+```{r eval=TRUE}
+## Conserver uniquement les valeurs pour l'idf :
+
+dvf_idf <- dvf9[ dvf9$DEP == c(91, 92, 93, 94, 95, 78, 75, 77), ]
+dvf_idf
+
+```
+
+
+
+```{r eval=TRUE}
+## Structuration du jeu de données final en csv :
+dvf_fin <- dvf_idf %>% select(
+  id, date, type, prix,
+  surface, prixm2, codecommune, LIBELLE,
+  latitude, longitude
+)
+
+dvf_fin
+
+```
+
+```{r eval=TRUE}
+## Enregistrer le fichier final en CSV :
+
+utils::write.csv(
+  dvf_fin, ## fichier à écrire
+  ".\\RESULTATS\\dvf_idf_enrich_2018.csv", ## nom du fichier dans le répertoire,
+  row.names=FALSE, ## ne pas exporter les noms des lignes 
+  fileEncoding="UTF-8", ## encodage du fichier (si autre que original, alors transformation)
+  quote=FALSE
+)
+
+
+```
+
+```{r eval=TRUE}
+## Agrégation par commune :
+dvf_com <- dvf_fin %>% 
+  group_by(codecommune) %>% ## grouper par commune
+  summarise(Nbtransactions=n(),
+            NBmaisons=length(type[type=="Maison"]),
+            NBapparts=length(type[type=="Appartement"]), 
+            prixmoyen=mean(prix),
+            prixmoyenm2=mean(prixm2),
+            NBMaisons=length(type[type=="Maison"]),
+            SurfaceMoyenne=mean(surface)
+            )
+
+utils::write.csv(dvf_com,
+                 file=".\\RESULTATS\\dvf_aggreg_com_2018.csv")
+
+
+```
+
+## Cartographie des résultats 
+
+Nous avons ensuite cartographié les données dans QGIS :
+<img src=".\\RESULTATS\\prix_moyen_commune_idf.png"/>
+
+## A la fin de ce notebook ...
+
+- vous avez vu comment faire un script de nettoyage dans R,
+- comment charger des données en local ou depuis le web (read.csv()), 
+- quels *packages* r sont intéressants pour cette tâche (tidyverse, dplyr, ggplot2),
+- le notebook qui vous permet de contrôler vos résultats tandis que le .r va vous permettre d'avoir des scripts plus tournés vers l'automatisation.
+- Ecrire des .csv (write.csv()),
+- faire des opérations "complexes" comme le groupby très simplement avec la possibilité de contrôler, à chaque étape, vos résultats.
+- Faire du calcul sur vos variables.
+
+Rappelez-vous qu'il s'agit uniquement des données dvf 2022. En poussant la **généralisation** de ce script, vous obtenez un script de nettoyage pour tout autre fichier ayant la même structure.
+
+Quelques points de vigilance tout de même ...
+
+- Assurez-vous que votre script soit exécutable dans son ensemble (redémarrez R SANS avoir enregistré l'historique des traitements .RData).
+- Assurez-vous que les packages nécessaires sont bien présents.
+- La cartographie n'a pas été abordée ici sous R, mais sous QGIS (demande de maîtriser au moins la cartographie sous QGIS). Si les bases du logiciel en sont pas maîtrisées ou connues, vous pouvez suivre [le tutoriel du CNRS](https://tutoqgis.cnrs.fr/). Il existe des packages de cartographie avec R, mais pour éviter toute surcharge, elles seront abordées une prochaine fois.
+
+[Le script d'origine](https://hackmd.io/KQkBGA1MTiujiWYtjOJdvA?view)

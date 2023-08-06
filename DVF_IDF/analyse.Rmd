@@ -1,0 +1,314 @@
+---
+title: "Analyse de données - évolution de la DVF en Île-de-France"
+output:
+  html_document:
+    df_print: paged
+---
+
+Nous allons répéter [l'étude réalisée par Boris Mericskay](https://hackmd.io/@hOaFaD2DS4WcOzNXU6j7vg/S1zaIGSQP), en l'adaptant à l'île-de-France et avec les dernières données disponibles. Nous allons faire une analyse spatiale et une analyse attributaire. Pour performer l'analyse spatiale, nous allons utiliser le package [sf](https://r-spatial.github.io/sf/) et un package de cartographie, [cartography](https://rcarto.github.io/carto_avec_r/chapitre2.html).
+
+
+
+```{r}
+## install.packages(c("tidyverse", "sf", "cartography"))
+
+base::library(tidyverse)
+base::library(sf) ## analyse spatiale
+base::library(cartography) ## carto
+base::library(cluster) ## pour le clustering
+
+
+```
+
+## Cartographier les prix de l'immobilier et les indicateurs pour la période 2018-2022
+
+R ne peut pas vraiment lire les shapfiles tels quels. On peut utiliser le package sf et sa méthode st_read() qui permet de lire ce genre de fichier.
+
+```{r}
+com = sf::st_read(dsn=".\\DONNEES\\communes_idf_2022.shp")
+
+## Afficher les communes disponibles
+plot(com["nomcom"], ## cibler le champ qui va permettre de catégoriser les données
+     main="Les communes d'Île-de-France")
+
+```
+On peut voir que des couleurs sont données par défaut. Il n'y a pas de véritable logique derrière les couleurs. R va donner un ensemble de couleurs aléatoires. Cette étape permet de vérifier la qualité des données.
+
+## Agréger les statistiques entre transactions DVF et communes
+
+Lors de la préparation des données, nous avons calculé :
+
+- le nb total de transaction,
+- le prix moyen des biens vendus,
+- la surface moyenne,
+- le prix moyen au m²
+```{r}
+com2018=utils::read.csv(".\\RESULTATS\\dvf_aggreg_com_2018.csv")
+
+com2019=utils::read.csv(".\\RESULTATS\\dvf_aggreg_com_2019.csv")
+
+com2020=utils::read.csv(".\\RESULTATS\\dvf_aggreg_com_2020.csv")
+
+com2021=utils::read.csv(".\\RESULTATS\\dvf_aggreg_com_2021.csv")
+
+head(com2018)
+
+```
+On rappelle qu'on a réalisé, en amont, un script R qui permet de préparer les données. Afin de réussir la préparation, nous nous sommes assurés que toutes les données exploitées étaient construites de la même manière. Ensuite, nous avons simplement relancé le script plusieurs fois, de sorte à obtenir de nouveaux jeux de données, nécessaires pour l'étape de l'analyse.
+
+```{r}
+## là on va cartographier le prix moyen au m² par commune 
+
+dvf=base::list(com2018, com2019, com2020, com2021) ## vecteur de dvf
+annees=c(2018, 2019, 2020, 2021)
+
+## Conversion du champ codecommune :
+for(i in 1:length(dvf)){
+  dvf[[i]]$codecommune = as.character(dvf[[i]]$codecommune)
+}
+
+## définir une fenêtre de dessiner
+
+mapping <- function(df, geom, by_x, by_y, chx_var, chx_method){
+  ## df : le dataframe sans géométrie
+  ## geom : le fichier géométrique pour la jointure. La jointure se fera vers la géométrie
+  ## by_y, by_x : respectivement les champs de jointure de df et de geom
+  ## chx_var : choix de la variable à représenter (numérique)
+  ## chx_method : choix de la méthode de représentation
+  temp=base::merge(x=geom, y=df,
+                   by.x=by_x, by.y=by_y, 
+                   all.x=TRUE)
+  
+  ## puis cartographie :
+  map=cartography::choroLayer(
+    x=temp,
+    var=chx_var,
+    method=chx_method,
+    legend.title.txt = "Prix moyen/m² (euros)",
+    north(pos="topright"),
+    barscale(size=10),
+    layoutLayer(title="Prix moyen au m² par communes")
+  )
+  
+  return(map)
+  
+}
+
+mapping(df=com2018, geom=com, by_y="codecommune", by_x="insee", chx_var="prixmoyenm2", chx_method="quantile")
+
+
+```
+
+```{r}
+mapping(df=com2019, geom=com, by_y="codecommune", by_x="insee", chx_var="prixmoyenm2", chx_method="quantile")
+
+```
+
+
+```{r}
+mapping(df=com2020, geom=com, by_y="codecommune", by_x="insee", 
+        chx_var="prixmoyenm2", chx_method="quantile")
+
+```
+
+```{r}
+mapping(df=com2021, geom=com, by_y="codecommune", by_x="insee", 
+        chx_var="prixmoyenm2", chx_method="quantile")
+
+```
+Nous avons cartographié le prix le prix moyen au m² dans les communes, aux quatre dates considérées. Cela nous permet de comparer les communes entre elles carte par carte, et comparer une commune à elle-même, dans le temps. Certaines communes voient leur moyenne augmenter.
+
+## Réaliser l'agrégation selon l'année
+
+Qu'est-ce que l'agrégation ? L'agrégation est un regroupement de plusieurs individus, selon des critères définis. Par exemple : si vous disposiez d'un fichier de l'ensemble des agents de votre organisation avec : nom, prénom, poste, direction, vous pourriez utiliser le champ "direction" pour regrouper vos agents. De plus, lorsqu'il y a des valeurs numériques, si les individus sont regroupés, il est possible de calculer des "statistiques descriptives" et les associer à chaque groupe. Considérant toujours le même fichier, vous disposez en plus du salaire de chaque agent. Vous pourriez, par cette opération de regroupement, obtenir : la moyenne, le minimum, le maximum et la médiance des salaires pour chaque direction.
+L'agrégation est une opération commune, qu'il faut connaître.
+
+
+```{r}
+## concaténer les fichiers :
+dvf_final = base::rbind(com2018, com2019, com2020, com2021)
+dvf_final
+
+
+IRISDVFANNEE <- merge(com, dvf_final, by.x="insee", by.y="codecommune")
+IRISDVFANNEE <- IRISDVFANNEE %>% 
+  group_by(insee) %>% ## grouper par le code insee
+  summarise(Nb_Transactions = sum(Nbtransactions), ## calculer des statistiques
+            Prix_moyen = (mean(prixmoyen)), 
+            Surface_Moyenne = (mean(SurfaceMoyenne)), 
+            PrixM2_moyen = (mean(prixmoyenm2)),
+            NBmaisons=mean(NBmaisons),
+            NBapparts=mean(NBapparts)
+            )
+
+IRISDVFANNEE
+
+```
+
+Quelques rappels :
+
+- merge() : est une fonction du R-base qui vous permet de "fusionner" des objets R, de sorte à obtenir un seul objet R, contenant toutes les informations nécessaires. Il fonctionne à la condition de choisir un champ dans chaque table à fusionner, qui vont contenir des valeurs communes, de sorte à assurer la jointure. 
+Par exemple : si vous disposez d'une table Agents avec les champs : id, nom, prenom, direction et d'une table Direction avec les champs : budget annuel, nombre de personnes, projets en cours et direction id. Vous pouvez faire la jointure entre la table Direction (via le champ direction id) et Agents (via le champ direction), puisqu'ils font référencent à la même chose : l'identifiant unique de la direction.
+
+- %>% : est un "pipe". Il permet de faire passer le retour d'une fonction par exemple, dans une autre fonction. Ce qui permet de ne pas multiplier les objets intermédiaires et donc de diminer l'utilisation de la mémoire (et dans ce cas, votre script est plus rapide !).
+
+
+
+## Faire une classification pour finir :
+
+*Qu'est-ce qu'une classification ?* C'est une technique assez connue, qui permet de "regrouper" des individus, en fonction de leur similarité. En géographie, c'est une technique classique, puisqu'elle se rapproche de la logique de la typologie. De manière générale, les classifications sont des outils statistiques de regroupement d'individus. Où chaque groupe dispose d'individu homogène entre eux et où les groupes sont hétérogènes entre eux. Il existe de nombreuses méthodes de classification. Nous allons là utiliser la méthode de classification ascendante hiérarchique (CAH).
+
+*Qu'est-ce que la ressemblance ?* On parle de ressemblance quand deux individus ont des caractéristiques similaires. Par exemple, ici deux communes peuvent se ressembler si elles ont un nombre de maison plus proche que d'autres individus.
+Il peut être intéressant de se plonger dans l'algorithme lui-même. Mais il faut, pour le moment, garder à l'esprit que ce n'est qu'une mesure de la ressemblance.
+
+
+
+```{r eval=TRUE}
+
+COMCAH1 <- IRISDVFANNEE %>% 
+  group_by(insee)
+
+COMCAH1 <- IRISDVFANNEE %>% 
+  group_by(insee) %>%
+  reframe(Nbtransactions = Nb_Transactions, ## summary() => défragmentation => reframe()
+          Prixmoyen = mean(Prix_moyen),
+          Prixm2moyen = mean(PrixM2_moyen),
+          Surfacemoyenne = mean(Surface_Moyenne),
+          NBapparts=NBapparts,
+          NBmaisons=NBmaisons,
+          
+          PropMaison = (NBmaisons/Nbtransactions)*100,
+          PropAppart = (NBapparts/Nbtransactions)*100,
+          geometry=unique(geometry))
+
+COMCAH <- data.frame(COMCAH1[, c("insee", "Nbtransactions", "Prixmoyen", 
+                                 "Prixm2moyen", "Surfacemoyenne", 
+                                 "PropMaison", "PropAppart", "geometry")])
+
+COMCAH
+
+```
+Les proportions de maison et d'appartement ne sont pas complémentaires. Cela s'explique par 
+
+```{r eval=TRUE}
+## centrer-réduire la variable :
+IRISDVFClassifscale <- scale(COMCAH[, c("Nbtransactions", "Prixmoyen", 
+                                        "Prixm2moyen", "Surfacemoyenne",
+                                        "PropMaison", "PropAppart")])
+
+
+
+```
+
+
+```{r eval=TRUE}
+
+CAHCOM <- agnes(IRISDVFClassifscale,
+                     metric = "euclidean",
+                     method = "ward")
+
+## documentation agens:https://www.rdocumentation.org/packages/cluster/versions/1.4-1/topics/agnes
+
+## graphique de l'inertie :
+
+sortedHeight<- sort(CAHCOM$height,decreasing= TRUE)
+relHeight<-sortedHeight/ sum(sortedHeight)*100
+
+barplot(relHeight[1:30], 
+        names.arg=seq(1, 30, 1),
+        col= "black",border= "white",
+        xlab= "Noeuds",
+        ylab= "Part de l'inertie totale (%)")
+
+```
+La force de la classification est le regroupement. Mais on ne va pas vraiment choisir le nombre de classes au hasard. Plusieurs facteurs sont à prendre en compte :
+- plus il y a de classes prises en compte, plus les classes représentées seront distinctes entre elles.
+- Moins il y a de classes prises en compte, plus les individus seront distincts dans les classes, par rapport à un nombre supérieur de classes.
+- Plus il y a de classes, plus il y a d'information à représenter et plus la représentation graphique (et donc l'assimilation de l'information) sera complexe pour le lecteur.
+- Le nombre de classe pris en compte dépend également du problème ou du domaine de connaissance. Si on vous demande 5 classes, alors 5 classes seront suffisantes. Mais il peut être intéressant de modifier votre code, de sorte à obtenir plus ou de classes que demandées, pour vérifier la pertinence.
+
+Nous avons pris la classe 6, classe à partir de laquelle les différences sont moins flagrantes, lorsqu'il y a plus de classes. L'usage d'un barplot dans ce cas de figure est pertinent, il vous permet de décider du nombre de classes et de "justifier" ou appuyer votre décision finale.
+
+```{r eval=TRUE}
+
+clusCOM <- cutree(CAHCOM, k = 6) ## 6 classes
+COMCluster <- as.data.frame(COMCAH1)
+COMCluster$CLUSIMMO <- factor(clusCOM,
+                              levels = 1:6,
+                              labels = paste("Classe", 1:6))
+
+
+```
+
+
+### Tableau des caractéristiques
+
+```{r eval=TRUE}
+
+RecapCAHCOM <- COMCluster %>%
+  group_by(CLUSIMMO) %>% 
+  summarise(NB= n(), 
+            NbTransac = mean(Nbtransactions), 
+            Prixmoyen = mean(Prixmoyen), 
+            Prixm2 = mean(Prixm2moyen), 
+            Surface=mean(Surfacemoyenne), 
+            PropMaison = mean(PropMaison), 
+            PropAppart= mean(PropAppart))
+
+RecapCAHCOM
+
+res <- RecapCAHCOM
+colnames(res) <- c("Classes", "Nombre transaction", "Nombre moyen de transactions", 
+                   "Prix moyen à la commune", "Prix au m² moyen à la commune", 
+                   "Surface moyenne", "Proportion moyenne de maisons", 
+                   "Proportion moyenne d'appartements")
+res
+
+```
+Rappelons qu'il s'agit de classer des individus, avec des caractéristiques quantitatives. Dans ce cas, il est intéressant de caractériser les différentes classes. Pour cela, il faut privilégier les représentations graphiques en deux dimensions (tableaux, barplot etc) qui permettent d'une part de saisir les caractéristiques des classes, d'autre part de comparer les classes entre elles.
+
+
+### Tableau récapitulatif pour construire un graphique :
+
+```{r eval=TRUE}
+SynthCAHCOM <- RecapCAHCOM %>% mutate(
+  nbtransacmoy = mean( as.numeric(CAHCOM$Nbtransactions), na.rm=TRUE),
+  surfacemoy = mean( as.numeric(CAHCOM$Surfacemoyenne) ),
+  prixmoy = mean( as.numeric(CAHCOM$Prixmoyen) ),
+  prixm2moyen = mean( as.numeric(CAHCOM$Prixm2moyen) ),
+  propmaisonmoyen = mean( as.numeric(CAHCOM$PropMaison) ),
+  propappartmoyen = mean( as.numeric(CAHCOM$PropAppart) ),
+  NbMutations=(NbTransac- nbtransacmoy)/nbtransacmoy*100,
+  Prix=(Prixmoyen- prixmoy)/prixmoy*100,
+  Prixm2=(Prixm2- prixm2moyen)/prixm2moyen*100,
+  Surface=(Surface- surfacemoy)/surfacemoy*100,
+  PropMaison=((PropMaison- propmaisonmoyen)/propmaisonmoyen)*100,
+  PropAppart=((PropAppart- propappartmoyen)/propappartmoyen)*100)
+  
+SynthCAHCOM <- data.frame(SynthCAHCOM[, c("CLUSIMMO", "NbMutations", 
+                                          "Surface", "Prix", 
+                                          "Prixm2", "PropMaison", 
+                                          "PropAppart")])
+
+
+```
+
+
+## Cartographie 
+
+```{r}
+
+COMCluster <- COMCluster[, c("insee", "Nbtransactions", "Prixmoyen",
+                             "Prixm2moyen", "Surfacemoyenne",
+                             "PropMaison", "PropAppart", "CLUSIMMO")]
+
+## création d'un fichier csv pour QGIS :
+utils::write.table(x=COMCluster,
+                 file=".\\RESULTATS\\COMCluster.csv", fileEncoding="utf-8",
+                 row.names=FALSE)
+
+```
+
+<img src=".\\RESULTATS\\CAH_DVF_IDF_2018-2022.png"/>
+
+La représentation finale a été réalisée sur QGIS. Bien que les représentations graphiques soient possibles avec R, il peut être plus intéressant d'utiliser un logiciel de représentations plus adaptés à vos besoins. Il s'agira donc d'extraire vos résultats sous forme exploitable pour votre logiciel. Ici nous avons utilisé QGIS, mais nous aurions très bien pu utiliser n'importe quel logiciel SIG ou de cartographie (Magritt, Tableau etc).
