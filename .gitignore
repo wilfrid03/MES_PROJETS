@@ -1,6 +1,7 @@
 #Ne pas conserver les images :
 *.png
 *.jpeg
+*.tif
 #ne pas conserver les données d'origine et les résultats:
 */DONNEES
 */RESULTATS
@@ -8,3 +9,6 @@
 *.Rhistory
 *.ipynb_checkpoints
 *.RProj
+#Ne pas conserver certains fichiers :
+*.qgz ## projets QGIS
+*.geojson
