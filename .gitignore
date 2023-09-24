@@ -3,12 +3,20 @@
 *.jpeg
 *.tif
 #ne pas conserver les données d'origine et les résultats:
-*/DONNEES
-*/RESULTATS
+
 #Ne pas conserver les historiques:
 *.Rhistory
 *.ipynb_checkpoints
 *.RProj
+
 #Ne pas conserver certains fichiers :
-*.qgz ## projets QGIS
+DVF_IDF2\\*.qgz ## projets QGIS
 *.geojson
+*.shp
+*.dbf
+*.prj
+*.shx
+*.cpg
+*.pbix
+*.xlsx
+DVF_IDF2\\DONNEES\\*.csv
