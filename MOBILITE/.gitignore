@@ -1,0 +1,11 @@
+*/*.csv
+*/*.json
+*/*.shp
+*/*.dbf
+*/*.prj
+*/*.shx
+*/*.geojson
+*/*.qmd
+*.qgz
+*/TRAITEMENT
+*/DONNEES
