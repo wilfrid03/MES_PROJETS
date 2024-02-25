@@ -20,3 +20,6 @@ DVF_IDF2\\*.qgz ## projets QGIS
 *.pbix
 *.xlsx
 DVF_IDF2\\DONNEES\\*.csv
+
+# Ne pas conserver le cache :
+*/cache
